@@ -1,13 +1,18 @@
 import os, requests, discord
 
-DISCORD_TOKEN   = os.getenv("DISCORD_TOKEN")   # token del bot
-MY_USER_ID      = int(os.getenv("MY_USER_ID")) # tu User ID
-ESP32_URL_GET   = os.getenv("ESP32_URL_GET")   # ej: http://IP_PUBLICA:8888/notify?auth=1234
-ESP32_URL_POST  = os.getenv("ESP32_URL_POST")  # ej: http://IP_PUBLICA:8888/data?auth=1234
+DISCORD_TOKEN   = os.getenv("DISCORD_TOKEN")
+MY_USER_ID      = int(os.getenv("MY_USER_ID"))
+ESP32_URL_GET   = os.getenv("ESP32_URL_GET")
+ESP32_URL_POST  = os.getenv("ESP32_URL_POST")
+
+# ⚙️ Configuración opcional
+SEND_DM_ON_FAIL = True   # Cambia a False si no querés recibir DMs al fallar
+SEND_MSG_IN_CHANNEL = False  # Cambia a True si querés que también avise en el canal
 
 intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
+intents.members = True  # necesario para enviar DMs
 
 client = discord.Client(intents=intents)
 
@@ -26,15 +31,16 @@ async def on_message(message):
                 print(f"📢 Te mencionaron en {message.guild} / #{message.channel}")
 
                 ok_get, ok_post = False, False
+                error_log = ""
 
-                # 🚀 GET simple al ESP32
+                # 🚀 Intento GET al ESP32
                 try:
                     r = requests.get(ESP32_URL_GET, timeout=4)
                     ok_get = (r.status_code == 200)
                 except Exception as e:
-                    print("❌ Error en GET:", e)
+                    error_log += f"GET: {e}\n"
 
-                # 🚀 POST con datos detallados
+                # 🚀 Intento POST al ESP32 con datos
                 try:
                     payload = {
                         "server": str(message.guild),
@@ -45,13 +51,30 @@ async def on_message(message):
                     r = requests.post(ESP32_URL_POST, json=payload, timeout=5)
                     ok_post = (r.status_code == 200)
                 except Exception as e:
-                    print("❌ Error en POST:", e)
+                    error_log += f"POST: {e}\n"
 
-                # 🚀 Feedback en Discord
+                # 🚀 Si funcionó → solo reacción 🤖
                 if ok_get or ok_post:
                     await message.add_reaction("🤖")
-                    await message.channel.send("📡 Notificación enviada al ESP32 ✅")
+                    if SEND_MSG_IN_CHANNEL:
+                        await message.channel.send("📡 Notificación enviada al ESP32 ✅")
                 else:
-                    await message.channel.send("⚠️ Error al notificar al ESP32")
+                    print("⚠️ Error al contactar al ESP32")
+                    if SEND_DM_ON_FAIL:
+                        try:
+                            user = await client.fetch_user(MY_USER_ID)
+                            jump_url = f"https://discord.com/channels/{message.guild.id}/{message.channel.id}/{message.id}"
+                            dm_msg = (
+                                f"⚠️ No pude contactar al ESP32.\n\n"
+                                f"📢 Te mencionaron en **{message.guild}** / **#{message.channel}**\n"
+                                f"👤 De: {message.author}\n"
+                                f"💬 Mensaje: \"{message.content}\"\n"
+                                f"🔗 [Abrir mensaje en Discord]({jump_url})\n\n"
+                                f"Error: {error_log or 'Sin detalles adicionales.'}"
+                            )
+                            await user.send(dm_msg)
+                            print("📩 Enviado DM de aviso.")
+                        except Exception as e:
+                            print("❌ No se pudo enviar DM:", e)
 
 client.run(DISCORD_TOKEN)
